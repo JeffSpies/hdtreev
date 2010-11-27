@@ -10,7 +10,9 @@ __status__ = "Beta"
 
 #########################################################################################
 
-# TODO SmatterJitter Group selected
+# TODO Tighten all code up in terms of modularity
+# TODO Refactor memory profile
+# TODO SmatterJitter Group selected and init
 # TODO Painting
 # TODO Serialize (Open/Save: on match datafile then locations, label, display)
 # TODO Export needs more work; SVG, PDF; Scroll bars
@@ -60,7 +62,7 @@ class Tree(QtGui.QGraphicsItem):
                 self.transformedData[i] = (self.data[i]-metadata['means'][i])/metadata['sds'][i] + metadata['stdmins'][i] + 5.0
                 self.isMissing.append(False)
             else:
-                # mean imputatio
+                # mean imputation
                 self.transformedData[i] = metadata['means'][i]/metadata['sds'][i] + metadata['stdmins'][i] + 5.0
                 self.isMissing.append(True)
         
