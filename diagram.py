@@ -3,7 +3,7 @@
 __author__ = "Jeffrey R. Spies"
 __copyright__ = "Copyright 2005-2010, Jeffrey R. Spies"
 __license__ = "Apache License, Version 2.0"
-__version__ = "0.3"
+__version__ = "0.32"
 __maintainer__ = "Jeffrey R. Spies"
 __email__ = "jspies@virginia.edu"
 __status__ = "Beta"
@@ -320,6 +320,13 @@ class ControlPanel(QtGui.QWidget):
         #self.shuffleWidget.setLayout(self.shuffleLayout)
         formLayout.addRow('Shuffle Seed', self.shuffleNumber)
         
+        self.multiply = QtGui.QSpinBox()
+        self.multiply.setMinimum(int(1))
+        self.multiply.setMaximum(int(math.pow(2, 31)-1))
+        self.dispatch.multiple = 1
+        self.multiply.valueChanged.connect(self.multipleValueChanged)
+        formLayout.addRow('Multiply Variables', self.multiply)
+        
         self.setLayout(formLayout)
     
     @QtCore.pyqtSlot()
@@ -332,6 +339,10 @@ class ControlPanel(QtGui.QWidget):
     @QtCore.pyqtSlot(int)
     def sbValueChanged(self, i):
         self.dispatch.shuffleNumberChanged(self.dispatch.shuffleSeed, i)
+    
+    @QtCore.pyqtSlot(int)
+    def multipleValueChanged(self, i):
+        self.dispatch.multipleChanged(self.dispatch.multipleChanged, i)
     
     #@QtCore.pyqtSlot(int)
     #def variableXChanged(self, index):
@@ -393,22 +404,26 @@ class VariablesUsedChanged(QtGui.QUndoCommand):
         self.dispatch = dispatch
         self.description = description
         
-        self.items = items
-        self.oldItems = self.dispatch.variablesUsed
+        self.new = items
+        self.old = copy.deepcopy(self.dispatch.variablesUsed)
     
     def redo(self):
-        self.dispatch.variablesUsed = self.items
+        self.dispatch.variablesUsed = self.new
         self.dispatch.variablesUsed.sort()
-        random.seed(self.dispatch.shuffleSeed)
         
-        shuffled = copy.copy(self.dispatch.variablesUsed) # selected columns
-        random.shuffle(shuffled)
-        for i in self.dispatch.graph.scene.items():
-            i.updateSelect(shuffled)
-        self.dispatch.graph.update()
+        self.dispatch.regenerateIcons()
+        
+        #random.seed(self.dispatch.shuffleSeed)
+        #shuffled = copy.copy(self.dispatch.variablesUsed) # selected columns
+        #random.shuffle(shuffled)
+        #for i in self.dispatch.graph.scene.items():
+        #    i.updateSelect(shuffled)
+        #self.dispatch.graph.update()
     
     def undo(self):
-        pass
+        self.dispatch.variablesUsed = self.old
+        self.dispatch.variablesUsed.sort()
+        self.dispatch.regenerateIcons()
 
 #########################################################################################
 
@@ -456,6 +471,29 @@ class LabelCheckBoxChanged(QtGui.QUndoCommand):
 
 #########################################################################################
 
+class MultipleChanged(QtGui.QUndoCommand):
+    def __init__(self, dispatch, old, new, description):
+        super(self.__class__, self).__init__(description)
+        self.dispatch = dispatch
+        self.description = description
+        
+        self.old = old
+        self.new = new
+    
+    def redo(self):
+        self.dispatch.multiple = self.new
+        self.dispatch.regenerateIcons()
+    
+    def undo(self):
+        self.dispatch.multiple = self.old
+        self.dispatch.regenerateIcons()
+    
+    def shuffleWithSeed(self, seed):
+        self.dispatch.shuffleSeed = seed
+        
+
+#########################################################################################
+
 class ShuffleNumberChanged(QtGui.QUndoCommand):
     def __init__(self, dispatch, old, new, description):
         super(self.__class__, self).__init__(description)
@@ -473,12 +511,14 @@ class ShuffleNumberChanged(QtGui.QUndoCommand):
     
     def shuffleWithSeed(self, seed):
         self.dispatch.shuffleSeed = seed
-        random.seed(self.dispatch.shuffleSeed)
-        shuffled = copy.copy(self.dispatch.variablesUsed) # selected columns
-        random.shuffle(shuffled)
-        for i in self.dispatch.graph.scene.items():
-            i.updateSelect(shuffled)
-        self.dispatch.graph.update()
+        self.dispatch.regenerateIcons()
+        
+        #random.seed(self.dispatch.shuffleSeed)
+        #shuffled = copy.copy(self.dispatch.variablesUsed) # selected columns
+        #random.shuffle(shuffled)
+        #for i in self.dispatch.graph.scene.items():
+        #    i.updateSelect(shuffled)
+        #self.dispatch.graph.update()
 
 #########################################################################################
 
@@ -553,6 +593,7 @@ class Dispatch(QtGui.QMainWindow):
         self.labelIndex = None
         self.variablesUsed = None
         self.shuffleSeed = 0
+        self.multiple = 1
         
         self.metadata = {}
         
@@ -691,6 +732,20 @@ class Dispatch(QtGui.QMainWindow):
         
         self.variablesUsed = copy.copy(variablesNumeric)
     
+    def regenerateIcons(self):
+        temp = copy.deepcopy(self.variablesUsed)
+        for i in range(1, self.multiple):
+            tempi = copy.deepcopy(self.variablesUsed)
+            for j in tempi:
+                temp.append(j)
+        random.seed(self.shuffleSeed)
+        shuffled = copy.copy(temp) # selected columns
+        random.shuffle(shuffled)
+        for i in self.graph.scene.items():
+            i.updateSelect(shuffled)
+        self.graph.update()
+        
+    
     def variablesUsedChanged(self, items):
         command = VariablesUsedChanged(self, items, description="Variables used changed")
         self.undoStack.push(command)
@@ -707,6 +762,10 @@ class Dispatch(QtGui.QMainWindow):
     
     def shuffleNumberChanged(self, old, new):
         command = ShuffleNumberChanged(self, old, new, "Setting one path value")
+        self.undoStack.push(command)
+    
+    def multipleChanged(self, old, new):
+        command = MultipleChanged(self, old, new, "Multiply variables by new value")
         self.undoStack.push(command)
     
     def setVariableNames(self, names):
@@ -763,9 +822,7 @@ class Dispatch(QtGui.QMainWindow):
 if __name__ == '__main__':
     import sys
     app = QtGui.QApplication(sys.argv)
-    app.setApplicationName("OpenMx GUI")
-    
+    app.setApplicationName("HDTreeV " + __version__)
     dispatch = Dispatch()
     dispatch.show()
-    
     sys.exit(app.exec_())
