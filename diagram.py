@@ -10,15 +10,13 @@ __status__ = "Beta"
 
 #########################################################################################
 
-# TODO label varialble have raw checkbox
 # TODO SmatterJitter Group selected
 # TODO Painting
 # TODO Serialize (Open/Save: on match datafile then locations, label, display)
-# TODO Export as SVG, PNG, PDF
-# TODO Row ID?
+# TODO Export needs more work; SVG, PDF; Scroll bars
 # TODO Update spinbox when undo
-# TODO Missingness?  Imputation?
-# TODO Tree size
+# TODO Missingness: imputation currently
+# TODO Expand for labels
 
 #########################################################################################
 
@@ -29,7 +27,7 @@ import math, random, csv, copy
 
 class Tree(QtGui.QGraphicsItem):
     labelBottomSpace = 15.0
-    def __init__(self, dispatch, row, select, x=None, y=None):
+    def __init__(self, dispatch, data, select, x=None, y=None):
         super(self.__class__, self).__init__()
         
         self.dispatch = dispatch
@@ -43,6 +41,7 @@ class Tree(QtGui.QGraphicsItem):
         
         self.matrix = QtGui.QMatrix()
         self.factor = 1
+        self.textRect = None
         
         self.color = QtCore.Qt.black
         
@@ -50,8 +49,22 @@ class Tree(QtGui.QGraphicsItem):
             QtCore.Qt.RoundCap, QtCore.Qt.MiterJoin)
         
         self.select = select
-        self.orow = row
-        self.row = [self.orow[i] for i in self.select]
+        self.data = data # Raw data of all types
+        metadata = self.dispatch.metadata
+        self.transformedData = copy.copy(data) # Transformed data for icon use
+        
+        self.isMissing =[]
+        
+        for i in range(0, len(metadata['isNumeric'])):
+            if self.data[i]:
+                self.transformedData[i] = (self.data[i]-metadata['means'][i])/metadata['sds'][i] + metadata['stdmins'][i] + 5.0
+                self.isMissing.append(False)
+            else:
+                # mean imputatio
+                self.transformedData[i] = metadata['means'][i]/metadata['sds'][i] + metadata['stdmins'][i] + 5.0
+                self.isMissing.append(True)
+        
+        self.row = [self.transformedData[i] for i in self.select]
         
         self.createIcon()
         
@@ -99,43 +112,44 @@ class Tree(QtGui.QGraphicsItem):
         self.xMax = 0.0
         self.xMin = 0.0
         
-        if len(self.row) % 2: # if odd
-            to = len(self.row)
-        else:
-            to = len(self.row)-1
-        for i in range(1, to, 2):
-            if isRight:
-                xsum += self.row[i]
-                isRight = False
+        if len(self.row) > 1:
+            if len(self.row) % 2: # if odd
+                to = len(self.row)
             else:
-                xsum -= self.row[i]
-                isRight = True
+                to = len(self.row)-1
+            for i in range(1, to, 2):
+                if isRight:
+                    xsum += self.row[i]
+                    isRight = False
+                else:
+                    xsum -= self.row[i]
+                    isRight = True
             
-            ysum += self.row[i+1]
-            self.opath.lineTo(xsum, ysum)
+                ysum += self.row[i+1]
+                self.opath.lineTo(xsum, ysum)
             
-            if xsum > self.xMax:
-                self.xMax = xsum
-            elif xsum < self.xMin:
-                self.xMin = xsum
+                if xsum > self.xMax:
+                    self.xMax = xsum
+                elif xsum < self.xMin:
+                    self.xMin = xsum
             
-            currentLevel.append((xsum, ysum))
+                currentLevel.append((xsum, ysum))
             
-            if countAtEachPrevLevelNode < 1: # 2 branches per node
-                countAtEachPrevLevelNode += 1
-            else:
-                nodeAtLevel += 1 # more than 2? move on to next node
-                if nodeAtLevel >= int(math.pow(2, level-1)):
-                    level += 1
-                    prevLevel = currentLevel
-                    currentLevel = []
-                    nodeAtLevel = 0
+                if countAtEachPrevLevelNode < 1: # 2 branches per node
+                    countAtEachPrevLevelNode += 1
+                else:
+                    nodeAtLevel += 1 # more than 2? move on to next node
+                    if nodeAtLevel >= int(math.pow(2, level-1)):
+                        level += 1
+                        prevLevel = currentLevel
+                        currentLevel = []
+                        nodeAtLevel = 0
             
-                countAtEachPrevLevelNode = 0
+                    countAtEachPrevLevelNode = 0
             
-            xsum = prevLevel[nodeAtLevel][0]
-            ysum = prevLevel[nodeAtLevel][1]
-            self.opath.moveTo(xsum,ysum)
+                xsum = prevLevel[nodeAtLevel][0]
+                ysum = prevLevel[nodeAtLevel][1]
+                self.opath.moveTo(xsum,ysum)
         
         tMin = self.xMin             # Rotation
         self.xMin = self.xMax        # Rotation
@@ -148,10 +162,14 @@ class Tree(QtGui.QGraphicsItem):
     
     def updateSelect(self, select):
         self.select = select
-        self.row = [self.orow[i] for i in self.select]
-        self.createIcon()
-        self.zoom(1)
-        self.update()
+        self.row = []
+        for i in self.select:
+            if i in self.dispatch.metadata['isNumeric']:
+                self.row.append(self.transformedData[i])
+        if len(self.row) > 0:
+            self.createIcon()
+            self.zoom(1)
+            self.update()
     
     def zoom(self, factor):
         self.factor *= factor
@@ -185,7 +203,7 @@ class Tree(QtGui.QGraphicsItem):
         xMax = self.xMax*self.factor
         
         if self.hasLabel():
-            value = self.orow[self.dispatch.labelIndex]
+            value = self.data[self.dispatch.labelIndex]
             if isinstance(value, float):
                 value = round(value, 3) # TODO setting for rounding floats
             
@@ -196,7 +214,11 @@ class Tree(QtGui.QGraphicsItem):
             elif xMax < abs(xMin):
                 tRect.moveRight((abs(xMin)-xMax)/2.0)
                 
-            painter.drawText(tRect, QtCore.Qt.AlignCenter | QtCore.Qt.AlignBottom, str(value))
+            self.textRect = painter.drawText(tRect, QtCore.Qt.AlignCenter | QtCore.Qt.AlignBottom, str(value))
+            #if self.textRect.right() > self.rect.right():
+            #    self.rect.setRight(self.textRect.right())
+            #if self.textRect.left() < self.rect.left():
+            #    self.rect.setLeft(self.textRect.left())
 
 #########################################################################################
 
@@ -296,7 +318,7 @@ class ControlPanel(QtGui.QWidget):
         #self.shuffleLayout.addWidget(self.shuffleFavorite)
         
         #self.shuffleWidget.setLayout(self.shuffleLayout)
-        formLayout.addRow('Shuffle Number', self.shuffleNumber)
+        formLayout.addRow('Shuffle Seed', self.shuffleNumber)
         
         self.setLayout(formLayout)
     
@@ -342,6 +364,7 @@ class GraphWidget(QtGui.QGraphicsView):
         self.scene.setItemIndexMethod(QtGui.QGraphicsScene.NoIndex) # if dynamic scene
 
         self.setScene(self.scene)
+        self.setBackgroundBrush(QtCore.Qt.white);
     
     def keyPressEvent(self, event):
         if event.key() == QtCore.Qt.Key_Shift:
@@ -374,13 +397,9 @@ class VariablesUsedChanged(QtGui.QUndoCommand):
         self.oldItems = self.dispatch.variablesUsed
     
     def redo(self):
-        print self.items
-        # Of selected
-        # Of numeric
-        # that's selection not variablesNumeric--change that
+        self.dispatch.variablesUsed = self.items
+        self.dispatch.variablesUsed.sort()
         random.seed(self.dispatch.shuffleSeed)
-        
-        #self.dispatch.variablesUsed
         
         shuffled = copy.copy(self.dispatch.variablesUsed) # selected columns
         random.shuffle(shuffled)
@@ -454,7 +473,7 @@ class ShuffleNumberChanged(QtGui.QUndoCommand):
     
     def shuffleWithSeed(self, seed):
         self.dispatch.shuffleSeed = seed
-        random.seed(seed)
+        random.seed(self.dispatch.shuffleSeed)
         shuffled = copy.copy(self.dispatch.variablesUsed) # selected columns
         random.shuffle(shuffled)
         for i in self.dispatch.graph.scene.items():
@@ -487,6 +506,10 @@ class Dispatch(QtGui.QMainWindow):
             statusTip = "Open a dataset",
             triggered=self.openDataset)
         
+        actionExportPNG = QtGui.QAction("&Export as PNG...", self,
+            statusTip = "Export graph as PNG",
+            triggered=self.exportPNG)
+        
         actionExit = QtGui.QAction("E&xit", self, 
             shortcut="Ctrl+Q",
             statusTip="Exit the application",
@@ -494,7 +517,8 @@ class Dispatch(QtGui.QMainWindow):
         
         self.addActions(self.menuFile, [
             actionNewDiagram, 
-            actionOpenData, 
+            actionOpenData,
+            actionExportPNG,
             actionExit
         ])
         
@@ -530,9 +554,7 @@ class Dispatch(QtGui.QMainWindow):
         self.variablesUsed = None
         self.shuffleSeed = 0
         
-        self.means = []
-        self.sds = []
-        self.mins = []
+        self.metadata = {}
         
         self.model = { 
             "fileName": None, 
@@ -575,11 +597,13 @@ class Dispatch(QtGui.QMainWindow):
         means = []
         counts = []
         sds = []
+        stdmins = []
         
         for val in self.data[0]:
             means.append(0.0)
             counts.append(0.0)
             sds.append(0.0)
+            stdmins.append(0.0)
             isString.append(False)
         
         #################################################################################
@@ -597,6 +621,8 @@ class Dispatch(QtGui.QMainWindow):
                     else:
                         isString[j] = True
         
+        transformed = copy.deepcopy(self.data)
+        
         #################################################################################
         
         for i in overcols:  # Calculate the means
@@ -612,8 +638,8 @@ class Dispatch(QtGui.QMainWindow):
             if not isString[i]:
                 tSum = 0.0
                 for j in overrows:
-                    if self.data[j][i]: # Not missing
-                        tSum += math.pow(float(self.data[j][i]) - float(means[i]), 2)
+                    if transformed[j][i]: # Not missing
+                        tSum += math.pow(float(transformed[j][i]) - float(means[i]), 2)
                 sds[i] = math.sqrt(float(tSum)/float(counts[i]))
             else:
                 sds[i] = None
@@ -621,41 +647,49 @@ class Dispatch(QtGui.QMainWindow):
         for i in overcols:
             if not isString[i]:
                 for j in overrows:
-                    if self.data[j][i]: # Not missing
-                        self.data[j][i] = (self.data[j][i]-means[i])/sds[i]
+                    if transformed[j][i]: # Not missing
+                        transformed[j][i] = (transformed[j][i]-means[i])/sds[i]
         
         #################################################################################
         
         for i in overcols:
             if not isString[i]:
-                tMin = 0
+                stdmins[i] = 0.0
                 for j in overrows:
-                    if self.data[j][i]: # Not missing
-                        if self.data[j][i] < tMin:
-                            tMin = self.data[j][i]
-                for j in overrows:
-                    if self.data[j][i]: # Not missing
-                        self.data[j][i] = self.data[j][i] + tMin + 5
+                    if transformed[j][i]: # Not missing
+                        if transformed[j][i] < stdmins[i]:
+                            stdmins[i] = transformed[j][i]
+                #for j in overrows:
+                #    if transformed[j][i]: # Not missing
+                #        transformed[j][i] = transformed[j][i] + stdmins[i] + 5
+            else:
+                stdmins[i] = None
         
         #################################################################################
         
-        self.variablesNumeric = []
+        variablesNumeric = []
         for i in overcols:
             if not isString[i]:
-                self.variablesNumeric.append(i)
+                variablesNumeric.append(i)
         
         self.areStrings = isString
         
         #################################################################################
         
+        self.metadata['means'] = means
+        self.metadata['sds'] = sds
+        self.metadata['stdmins'] = stdmins
+        self.metadata['isNumeric'] = variablesNumeric
+        
+        del transformed
+        
         x = 0
         for row in self.data:
-            # [row[i] for i in self.variablesNumeric]
-            tree = Tree(self, row, self.variablesNumeric, x=x, y=x)
+            tree = Tree(self, row, variablesNumeric, x=x, y=x)
             self.graph.scene.addItem(tree)
             x += 2
         
-        self.variablesUsed = self.variablesNumeric
+        self.variablesUsed = copy.copy(variablesNumeric)
     
     def variablesUsedChanged(self, items):
         command = VariablesUsedChanged(self, items, description="Variables used changed")
@@ -689,6 +723,16 @@ class Dispatch(QtGui.QMainWindow):
             self.controlPanel.variablesDisplayed.addItem(str(i), tVal)
             counter += 1
         self.controlPanel.variablesDisplayed.selectAll() # just numerics
+    
+    def exportPNG(self):
+        self.deselectAll()
+        fileName = QtGui.QFileDialog.getSaveFileName(self)
+        #image = QtGui.QImage(500, 500, QtGui.QImage.Format_RGB32)
+        #painter = QtGui.QPainter(image);
+        #self.graph.render(painter)
+        #image.save(fileName)
+        #painter.end()
+        QtGui.QPixmap.grabWidget(self.graph).save(fileName, "PNG")
     
     def selectAll(self):
         for i in self.graph.scene.items():
